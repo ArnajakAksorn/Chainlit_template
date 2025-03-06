@@ -1,0 +1,21 @@
+[project]
+name = "Chainlit_template"
+version = "0.1.0"
+description = "Default template for PDM package"
+authors = [
+    {name = "ArnajakAksorn",email = "arnajak.tun@aksorn.com"},
+]
+dependencies = [
+    "langchain>=0.3.20",
+    "chainlit>=2.2.1",
+    "langchain-openai>=0.3.7",
+    "aiohttp>=3.11.13",
+    "asyncpg>=0.30.0",
+]
+requires-python = "==3.12.*"
+readme = "README.md"
+license = {text = "MIT"}
+
+
+[tool.pdm]
+distribution = false
