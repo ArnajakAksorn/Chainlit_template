@@ -4,10 +4,11 @@ from langchain.memory import ConversationBufferMemory
 from langchain.schema.runnable import Runnable,RunnablePassthrough, RunnableLambda
 from langchain.schema.runnable.config import RunnableConfig
 from langchain.schema import StrOutputParser
-from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
+
 from operator import itemgetter
 from typing import Optional, Dict
 from typing import cast
+
 import chainlit as cl
 from chainlit.types import ThreadDict
 
@@ -15,9 +16,19 @@ from chainlit.types import ThreadDict
 from dotenv import load_dotenv
 load_dotenv()
 
-def setup_runnable():
-    memory = cl.user_session.get("memory")  # type: ConversationBufferMemory
-    model = AzureChatOpenAI(
+from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.memory import MemorySaver
+from typing import Annotated
+from typing_extensions import TypedDict
+from operator import add
+from langgraph.graph.message import add_messages
+from collections import defaultdict
+
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+
+
+llm = AzureChatOpenAI(
         azure_deployment="gpt-4o-mini",  # or your deployment
         api_version="2024-05-01-preview",  # or your api version
         # api_version="1",
@@ -27,36 +38,25 @@ def setup_runnable():
         max_retries=2,
         # other params...
     )
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", "You are a helpful chatbot"),
-            MessagesPlaceholder(variable_name="history"),
-            ("human", "{question}"),
-        ]
-    )
 
-    runnable = (
-        RunnablePassthrough.assign(
-            history=RunnableLambda(memory.load_memory_variables) | itemgetter("history")
-        )
-        | prompt
-        | model
-        | StrOutputParser()
-    )
-    cl.user_session.set("runnable", runnable)
+def chatbot(state: State):
+    return {"messages": [llm.invoke(state["messages"])]}
+
+graph_builder = StateGraph(State)
+graph_builder.add_node("chatbot", chatbot)
+graph_builder.add_edge(START, "chatbot")
+graph_builder.add_edge("chatbot", END)
+
+
+def setup_runnable():
+    memory = cl.user_session.get("memory")  # type: ConversationBufferMemory
+    graph = graph_builder.compile(checkpointer=memory)
+    cl.user_session.set("runnable", graph)
 
 @cl.on_chat_resume
 async def on_chat_resume(thread: ThreadDict):
-    memory = ConversationBufferMemory(return_messages=True)
-    root_messages = [m for m in thread["steps"] if m["parentId"] == None]
-    for message in root_messages:
-        if message["type"] == "user_message":
-            memory.chat_memory.add_user_message(message["output"])
-        else:
-            memory.chat_memory.add_ai_message(message["output"])
-
-    cl.user_session.set("memory", memory)
-
+    memory_saver = MemorySaver()
+    cl.user_session.set("memory", memory_saver)
     setup_runnable()
 
 @cl.password_auth_callback
@@ -78,7 +78,8 @@ def auth_callback(username: str, password: str):
 
 @cl.on_chat_start
 async def on_chat_start():
-    cl.user_session.set("memory", ConversationBufferMemory(return_messages=True))
+    print("Chat started ------------------------------------------")
+    cl.user_session.set("memory", MemorySaver())
     setup_runnable()
     cl.user_session.set("counter", 0)
     # app_user = cl.user_session.get("user")
@@ -87,24 +88,17 @@ async def on_chat_start():
 
 @cl.on_message
 async def on_message(message: cl.Message):
-    memory = cl.user_session.get("memory") 
     runnable = cl.user_session.get("runnable")
     counter = cl.user_session.get("counter", 0)
     msg = cl.Message(content="")
-    config: RunnableConfig = {
-        "configurable": {"thread_id": cl.context.session.thread_id}
-    }
-
-    async for chunk in runnable.astream(
-        {"question": message.content},
-        # config=RunnableConfig(callbacks=[cl.LangchainCallbackHandler()]),
-        config
-    ):
-        await msg.stream_token(chunk)
+    config = {"configurable": {"thread_id": cl.context.session.thread_id}}
+    async for output in runnable.astream(
+        {"messages":message.content},
+        config,
+        stream_mode="updates"):
+        for key, value in output.items():
+            await msg.stream_token(value["messages"][-1].content)
 
     await msg.send()
-
     counter += 1
     cl.user_session.set("counter", counter)
-    memory.chat_memory.add_user_message(message.content)
-    memory.chat_memory.add_ai_message(msg.content)
