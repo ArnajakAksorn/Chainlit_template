@@ -21,11 +21,11 @@ from langgraph.checkpoint.memory import MemorySaver
 from typing import Annotated
 from typing_extensions import TypedDict
 from operator import add
-from langgraph.graph.message import AnyMessage, add_messages
+from langgraph.graph.message import add_messages
 from collections import defaultdict
 
 class State(TypedDict):
-    messages: Annotated[list[AnyMessage], add_messages]
+    messages: Annotated[list, add_messages]
 
 
 llm = AzureChatOpenAI(
@@ -59,9 +59,9 @@ async def on_chat_resume(thread: ThreadDict):
     # print(type(root_messages))
     # print(root_messages)
     print("Chat resumed ------------------------------------------")
-    # print(thread)
+    print(thread)
     memory_saver = MemorySaver()
-    # memory_saver.storage = thread
+    memory_saver.storage = thread
     cl.user_session.set("memory", memory_saver)
     setup_runnable()
 
