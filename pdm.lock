@@ -5,7 +5,7 @@
 groups = ["default"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:26123ff05b195decbfd59de4fa3a93ffbcb92de72d8c2e3615bc5deaab90c832"
+content_hash = "sha256:fde1c24cc2c42f20b2375428e819a370748568aa9a6f823541908307fa2a605d"
 
 [[metadata.targets]]
 requires_python = "==3.12.*"
@@ -708,6 +708,23 @@ files = [
 ]
 
 [[package]]
+name = "langgraph-checkpoint-postgres"
+version = "2.0.16"
+requires_python = "<4.0.0,>=3.9.0"
+summary = "Library with a Postgres implementation of LangGraph checkpoint saver."
+groups = ["default"]
+dependencies = [
+    "langgraph-checkpoint<3.0.0,>=2.0.15",
+    "orjson>=3.10.1",
+    "psycopg-pool<4.0.0,>=3.2.0",
+    "psycopg<4.0.0,>=3.2.0",
+]
+files = [
+    {file = "langgraph_checkpoint_postgres-2.0.16-py3-none-any.whl", hash = "sha256:aed8b2a66deb62619d14f0ba14ed229032d64404cee1851f0e5c256885de96b9"},
+    {file = "langgraph_checkpoint_postgres-2.0.16.tar.gz", hash = "sha256:3e7b226157068fd30b3c4e9127ca77055c30c082b5a5490752e969fffff7dac2"},
+]
+
+[[package]]
 name = "langgraph-prebuilt"
 version = "0.1.2"
 requires_python = "<4.0.0,>=3.9.0"
@@ -1134,6 +1151,36 @@ files = [
 ]
 
 [[package]]
+name = "psycopg"
+version = "3.2.6"
+requires_python = ">=3.8"
+summary = "PostgreSQL database adapter for Python"
+groups = ["default"]
+dependencies = [
+    "backports-zoneinfo>=0.2.0; python_version < \"3.9\"",
+    "typing-extensions>=4.6; python_version < \"3.13\"",
+    "tzdata; sys_platform == \"win32\"",
+]
+files = [
+    {file = "psycopg-3.2.6-py3-none-any.whl", hash = "sha256:f3ff5488525890abb0566c429146add66b329e20d6d4835662b920cbbf90ac58"},
+    {file = "psycopg-3.2.6.tar.gz", hash = "sha256:16fa094efa2698f260f2af74f3710f781e4a6f226efe9d1fd0c37f384639ed8a"},
+]
+
+[[package]]
+name = "psycopg-pool"
+version = "3.2.6"
+requires_python = ">=3.8"
+summary = "Connection Pool for Psycopg"
+groups = ["default"]
+dependencies = [
+    "typing-extensions>=4.6",
+]
+files = [
+    {file = "psycopg_pool-3.2.6-py3-none-any.whl", hash = "sha256:5887318a9f6af906d041a0b1dc1c60f8f0dda8340c2572b74e10907b51ed5da7"},
+    {file = "psycopg_pool-3.2.6.tar.gz", hash = "sha256:0f92a7817719517212fbfe2fd58b8c35c1850cdd2a80d36b581ba2085d9148e5"},
+]
+
+[[package]]
 name = "pycparser"
 version = "2.22"
 requires_python = ">=3.8"
@@ -1503,6 +1550,18 @@ dependencies = [
 files = [
     {file = "typing_inspect-0.9.0-py3-none-any.whl", hash = "sha256:9ee6fc59062311ef8547596ab6b955e1b8aa46242d854bfc78f4f6b0eff35f9f"},
     {file = "typing_inspect-0.9.0.tar.gz", hash = "sha256:b23fc42ff6f6ef6954e4852c1fb512cdd18dbea03134f91f856a95ccc9461f78"},
+]
+
+[[package]]
+name = "tzdata"
+version = "2025.1"
+requires_python = ">=2"
+summary = "Provider of IANA time zone data"
+groups = ["default"]
+marker = "sys_platform == \"win32\""
+files = [
+    {file = "tzdata-2025.1-py2.py3-none-any.whl", hash = "sha256:7e127113816800496f027041c570f50bcd464a020098a3b6b199517772303639"},
+    {file = "tzdata-2025.1.tar.gz", hash = "sha256:24894909e88cdb28bd1636c6887801df64cb485bd593f2fd83ef29075a81d694"},
 ]
 
 [[package]]

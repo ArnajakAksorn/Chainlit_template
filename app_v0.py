@@ -1,110 +1,132 @@
-from langchain_openai import AzureChatOpenAI
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.memory import ConversationBufferMemory
-from langchain.schema.runnable import Runnable,RunnablePassthrough, RunnableLambda
-from langchain.schema.runnable.config import RunnableConfig
-from langchain.schema import StrOutputParser
-
-from operator import itemgetter
-from typing import Optional, Dict
-from typing import cast
-
-import chainlit as cl
-from chainlit.types import ThreadDict
-
-# Load environment variables    
+import os
 from dotenv import load_dotenv
 load_dotenv()
 
-from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.memory import MemorySaver
-from typing import Annotated
-from typing_extensions import TypedDict
-from operator import add
-from langgraph.graph.message import add_messages
-from collections import defaultdict
+# Use the AzureChatOpenAI model from your configuration
+from langchain_openai import AzureChatOpenAI
+model = AzureChatOpenAI(
+    azure_deployment="gpt-4o-mini",  # or your deployment
+    api_version="2024-05-01-preview",  # or your API version
+    temperature=0,
+    max_tokens=None,
+    timeout=None,
+    max_retries=2,
+)
 
-class State(TypedDict):
-    messages: Annotated[list, add_messages]
+from langgraph.graph import START, MessagesState, StateGraph
+import chainlit as cl
 
+# Define the workflow
+workflow = StateGraph(state_schema=MessagesState)
 
-llm = AzureChatOpenAI(
-        azure_deployment="gpt-4o-mini",  # or your deployment
-        api_version="2024-05-01-preview",  # or your api version
-        # api_version="1",
-        temperature=0,
-        max_tokens=None,
-        timeout=None,
-        max_retries=2,
-        # other params...
-    )
+def call_model(state: MessagesState):
+    response = model.invoke(state["messages"])
+    return {"messages": response}
 
-def chatbot(state: State):
-    return {"messages": [llm.invoke(state["messages"])]}
+workflow.add_edge(START, "model")
+workflow.add_node("model", call_model)
 
-graph_builder = StateGraph(State)
-graph_builder.add_node("chatbot", chatbot)
-graph_builder.add_edge(START, "chatbot")
-graph_builder.add_edge("chatbot", END)
+@cl.on_chat_start
+async def chat_start():
+    """
+    Initialize the PostgreSQL checkpointer and compile the workflow
+    for this specific chat session.
+    """
+    db_uri = os.getenv("DB_URI")
+    if not db_uri:
+        raise ValueError("DB_URI not found in environment variables")
+        
+    # Establish a Postgres connection for this session
+    from psycopg import AsyncConnection
+    postgres_conn = await AsyncConnection.connect(db_uri)
+    
+    # Create a checkpointer for this connection
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+    postgres_checkpointer = AsyncPostgresSaver(postgres_conn)
+    await postgres_checkpointer.setup()
+    cl.user_session.set("memory",postgres_checkpointer)
 
-
-def setup_runnable():
-    memory = cl.user_session.get("memory") 
-    graph = graph_builder.compile(checkpointer=memory)
-    cl.user_session.set("runnable", graph)
-
-@cl.on_chat_resume
-async def on_chat_resume(thread: ThreadDict):
-    # root_messages = [m for m in thread["steps"] if m["parentId"] == None]
-    # print(type(root_messages))
-    # print(root_messages)
-    print("Chat resumed ------------------------------------------")
-    print(thread)
-    memory_saver = MemorySaver()
-    memory_saver.storage = thread
-    cl.user_session.set("memory", memory_saver)
-    setup_runnable()
+    # Compile the workflow using the checkpointer
+    session_app = workflow.compile(checkpointer=postgres_checkpointer)
+    
+    # Store the workflow (and its persistent memory) in the user session
+    cl.user_session.set("app", session_app)
 
 @cl.password_auth_callback
 def auth_callback(username: str, password: str):
-    # Fetch the user matching username from your database
-    # and compare the hashed password with the value stored in the database
     if (username, password) == ("admin", "admin"):
-        return cl.User(
-            identifier="admin", metadata={"role": "admin", "provider": "credentials"}
-        )
-    # if username contain aksorn and password is 1234 
-    elif "aksorn" in username and password == "1234":
-        return cl.User(
-            identifier=username, metadata={"role": "user", "provider": "credentials"}
-        )
+        return cl.User(identifier="admin", metadata={"role": "admin", "provider": "credentials"})
     else:
         return None
 
-
-@cl.on_chat_start
-async def on_chat_start():
-    print("Chat started ------------------------------------------")
-    cl.user_session.set("memory", MemorySaver())
-    setup_runnable()
-    cl.user_session.set("counter", 0)
-    # app_user = cl.user_session.get("user")
-    # await cl.Message(f"Hello {app_user.identifier}").send()
-
-
 @cl.on_message
-async def on_message(message: cl.Message):
-    runnable = cl.user_session.get("runnable")
-    counter = cl.user_session.get("counter", 0)
-    msg = cl.Message(content="")
-    config = {"configurable": {"thread_id": cl.context.session.thread_id}}
-    async for output in runnable.astream(
-        {"messages":message.content},
-        config,
-        stream_mode="updates"):
-        for key, value in output.items():
-            await msg.stream_token(value["messages"][-1].content)
+async def main(message: cl.Message):
+    answer = cl.Message(content="")
+    await answer.send()
+    # memory = cl.user_session.get("memory") 
 
-    await msg.send()
-    counter += 1
-    cl.user_session.set("counter", counter)
+    from langchain_core.messages import HumanMessage, AIMessageChunk
+    from langchain_core.runnables.config import RunnableConfig
+
+    config: RunnableConfig = {"configurable": {"thread_id": cl.context.session.thread_id}}
+
+    # Retrieve the workflow (with persistent memory) for this session
+    app = cl.user_session.get("app")
+    if app is None:
+        await answer.update(content="Error: Persistent memory not initialized.")
+        return
+
+    # Stream responses from the workflow while maintaining persistent memory
+    async for msg, _ in app.astream(
+        {"messages": [HumanMessage(content=message.content)]},
+        config,
+        stream_mode="messages",
+    ):
+        if isinstance(msg, AIMessageChunk):
+            answer.content += msg.content
+            await answer.update()
+
+@cl.on_chat_resume
+async def on_chat_resume(thread: dict):
+    """
+    Resume the conversation by reconnecting to PostgreSQL,
+    compiling the workflow with the persistent checkpointer,
+    and reloading the conversation history from the thread.
+    """
+    # Retrieve your DB connection URI from environment variables
+    db_uri = os.getenv("DB_URI")
+    if not db_uri:
+        raise ValueError("DB_URI not found in environment variables")
+    
+    # Re-establish a PostgreSQL connection for this session
+    from psycopg import AsyncConnection
+    postgres_conn = await AsyncConnection.connect(db_uri)
+    
+    # Initialize the PostgreSQL checkpointer
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+    postgres_checkpointer = AsyncPostgresSaver(postgres_conn)
+    await postgres_checkpointer.setup()
+    
+    # Compile the workflow using the checkpointer (this loads the persisted state if available)
+    resumed_app = workflow.compile(checkpointer=postgres_checkpointer)
+    
+    # Reconstruct the conversation history from the thread steps
+    # Note: We assume root messages (without parentId) are the conversation starters.
+    from langchain_core.messages import HumanMessage, AIMessage
+    conversation_history = []
+    root_messages = [m for m in thread["steps"] if m.get("parentId") is None]
+    for message in root_messages:
+        if message["type"] == "user_message":
+            conversation_history.append(HumanMessage(content=message["output"]))
+        else:
+            # Any non-user message will be treated as an AI response.
+            conversation_history.append(AIMessage(content=message["output"]))
+    
+    # Set the resumed state in the workflow.
+    # We assume that the workflow's state is a dict with a key "messages"
+    # This call "injects" the conversation history into the workflow.
+    initial_state = {"messages": conversation_history}
+    resumed_app.get_state(initial_state)  # Ensure your workflow instance supports state updates.
+    
+    # Store the resumed workflow in the session so that on_message can access it.
+    cl.user_session.set("app", resumed_app)
